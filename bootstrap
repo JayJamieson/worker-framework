@@ -1,0 +1,69 @@
+#!/bin/sh
+
+# initialization of environment
+init() {
+  echo "[RUNTIME] Starting worker"
+}
+
+shutdown() {
+  echo "[RUNTIME] Performing shutdown sequence"
+  # TODO revisit in a future dev cycle to implement basic job server
+  # case $1 in
+  #   0)
+  #     curl -s -X POST -H 'Content-Type: text/plain' --data-binary '@/var/log/stdout.log' "http://host.docker.internal:3000/job/$JOB_ID/complete"
+  #     ;;
+  #   *)
+  #     curl -s -X POST -H 'Content-Type: text/plain' --data-binary '@/var/log/stdout.log' "http://host.docker.internal:3000/job/$JOB_ID/fail"
+  #     ;;
+  # esac
+}
+
+sigterm_handler() {
+  echo "[RUNTIME] Worker stopped before completion"
+}
+
+sigterm_handler() {
+  if [ $pid -ne 0 ]; then
+    # the above if statement is important because it ensures
+    # that the application has already started. without this you
+    # could attempt cleanup steps if the application failed to
+    # start, causing errors.
+    echo "[RUNTIME] SIGINT|SIGERM received for PID $pid"
+    kill -15 "$pid"
+    wait "$pid"
+    sigterm_handler
+    echo "[RUNTIME] SIGINT|SIGERM handled for PID $pid"
+  fi
+  exit 143; # 128 + 15 -- SIGTERM
+}
+
+# Setup signal trap
+# on callback execute the specified handler
+trap 'sigterm_handler' TERM INT HUP KILL
+
+# Initialization
+init
+
+#{{args}}
+
+# use this if you want job logs put into file and saved for later viewing
+## separate log files
+# >/var/log/stdout.log 2>/var/log/stderr.log #{{binary}} #{{args}} &
+
+## single log file
+# >/var/log/stdout.log 2>&1 #{{binary}} #{{args}} &
+
+## HACK to put output to log files and console
+{
+ #{{binary}} #{{args}}
+} > >(tee -a /var/log/stdout.log) 2> >(tee -a /var/log/stdout.log >&2) &
+
+pid="$!"
+
+# wait until job completes
+wait "$pid"
+return_code="$?"
+
+# cleanup
+shutdown $return_code
+exit $return_code

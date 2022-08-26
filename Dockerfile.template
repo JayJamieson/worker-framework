@@ -1,0 +1,10 @@
+FROM debian:name-slim
+
+ENV WORKER_ROOT=/var/task
+ENV WORKER_RUNTIME_DIR=/var/runtime
+
+WORKDIR /var/task
+
+COPY entrypoint.sh /usr/local/bin/
+
+ENTRYPOINT ["entrypoint.sh"]
