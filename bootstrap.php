@@ -2,7 +2,6 @@
 
 function exception_error_handler($errno, $errstr, $errfile, $errline)
 {
-  echo "here";
   // handle error with sentry or cloudwatch logging here
   throw new ErrorException($errstr, $errno, 0, $errfile, $errline);
 }

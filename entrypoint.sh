@@ -24,9 +24,11 @@ sigterm_handler() {
     # that the application has already started. without this you
     # could attempt cleanup steps if the application failed to
     # start, causing errors.
+    echo "[bash] SIGINT|SIGERM received for $pid"
     kill -15 "$pid"
     wait "$pid"
     post_execution_handler
+    echo "[bash] SIGINT|SIGERM handled $pid"
   fi
   exit 143; # 128 + 15 -- SIGTERM
 }
