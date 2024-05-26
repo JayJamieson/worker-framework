@@ -4,11 +4,10 @@ RUN docker-php-ext-configure pcntl --enable-pcntl \
   && docker-php-ext-install \
   pcntl
 
-COPY ./main.php /main/main.php
-COPY ./job.php /main/job.php
-COPY ./bootstrap.php /main/bootstrap.php
+COPY ./runtime.php /runtime/runtime.php
+COPY ./job.php /runtime/job.php
 
 COPY ./entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-ENTRYPOINT ["entrypoint.sh", "php", "/main/main.php"]
+ENTRYPOINT ["entrypoint.sh", "php", "/runtime/runtime.php"]

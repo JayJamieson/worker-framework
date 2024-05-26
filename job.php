@@ -10,27 +10,68 @@ class Hot_new_fergus_job implements Container_aware_job_interface
 {
 
   private ?array $context_data;
+  private int $company_id;
 
-  public function __construct($company_id, ?array $context_data = [])
+  public function __construct($company_id, array $context_data = [])
   {
     $this->company_id = $company_id;
-    $this->queue_priority = 4;
-    $this->is_concurrent = true;
-    $this->queue_is_fast_lane = true;
     $this->context_data = $context_data;
   }
 
   public function perform()
   {
-    $i = 1;
-    printf("company_id: %s\n", $this->company_id);
-    printf("%s\n", json_encode($this->context_data));
-    printf("my pid %s\n", getmypid());
+    printf("[JOB] company_id: %s\n", $this->company_id);
+    printf("[JOB] %s\n", json_encode($this->context_data));
+    printf("[JOB] my pid %s\n", getmypid());
+    fwrite(STDERR, "test stderr\n");
 
-    do {
-      printf("[%s]\n", $i++);
-
+    for ($i=0; $i < 5; $i++) {
+      printf("[JOB] %s\n", $i);
       sleep(1);
-    } while (TRUE);
+    }
+  }
+}
+
+class Cold_old_fergus_job implements Container_aware_job_interface
+{
+
+  private ?array $context_data;
+  private int $company_id;
+
+  public function __construct($company_id, array $context_data = [])
+  {
+    $this->company_id = $company_id;
+    $this->context_data = $context_data;
+  }
+
+  public function perform()
+  {
+    printf("[JOB] company_id: %s\n", $this->company_id);
+    printf("[JOB] %s\n", json_encode($this->context_data));
+    printf("[JOB] my pid %s\n", getmypid());
+
+    throw new Exception("aaaah2!");
+  }
+}
+
+class Hot_v2_fergus_job implements Container_aware_job_interface
+{
+
+  private ?array $context_data;
+  private int $company_id;
+
+  public function __construct($company_id, array $context_data = [])
+  {
+    $this->company_id = $company_id;
+    $this->context_data = $context_data;
+  }
+
+  public function perform()
+  {
+    printf("[JOB] company_id: %s\n", $this->company_id);
+    printf("[JOB] %s\n", json_encode($this->context_data));
+    printf("[JOB] my pid %s\n", getmypid());
+
+    trigger_error("aaaah1");
   }
 }

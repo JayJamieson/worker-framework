@@ -1,8 +1,16 @@
 version: '3'
 services:
-  job:
-    build:
-      context: .
-      dockerfile: Dockerfile
+  db:
+    image: mysql
+    restart: always
+    ports:
+      - 3306:3306
     environment:
-      - COMPANY_ID=420
+      MYSQL_DATABASE: job_container
+      MYSQL_ROOT_PASSWORD: password
+  # job:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.php
+  #   environment:
+  #     - COMPANY_ID=420
