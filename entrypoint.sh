@@ -9,13 +9,22 @@ init() {
 post_run_handler() {
   echo "[BASH] Job completed successfuly"
   echo "[BASH] Running cleanup tasks"
-  curl -X POST -H 'Content-Type: text/plain' --data-binary '@/var/log/stdout.log' "http://host.docker.internal:3000/job/$JOB_ID/complete"
+  case $1 in
+    0)
+      curl -s -X POST -H 'Content-Type: text/plain' --data-binary '@/var/log/stdout.log' "http://host.docker.internal:3000/job/$JOB_ID/complete"
+      ;;
+    *)
+      curl -s -X POST -H 'Content-Type: text/plain' --data-binary '@/var/log/stdout.log' "http://host.docker.internal:3000/job/$JOB_ID/fail"
+      ;;
+  esac
+
+
 }
 
 cleanup_handler() {
   echo "[BASH] Job stopped before completion"
   echo "[BASH] Running cleanup tasks"
-  curl -X POST -H 'Content-Type: text/plain' --data-binary '@/var/log/stdout.log' "http://host.docker.internal:3000/job/$JOB_ID/fail"
+  curl -s -X POST -H 'Content-Type: text/plain' --data-binary '@/var/log/stdout.log' "http://host.docker.internal:3000/job/$JOB_ID/fail?status=stopped"
 }
 
 # Sigterm Handler
@@ -54,5 +63,5 @@ wait "$pid"
 return_code="$?"
 
 # cleanup
-post_run_handler
+post_run_handler $return_code
 exit $return_code
