@@ -1,40 +1,53 @@
-# ECS Job framework
+# Worker framework (WIP)
 
-This is a simple php job framework for the purpose of running fergus core cron jobs
-in containers on ECS instead of a dedicate queue server. This would allow us to isolate failures
-and be able to run adhoc jobs or failed jobs easier.
+Worker framework takes heavy inspiration from AWS Lambda without the maximum 15 minute run duration. I wanted to be able to implement workers
+with a similar signature to `handler` that Lambda has but be able to have my worker run for as long as needed.
 
 ## How it works
 
-The `entrypoint.sh` contains signal handlers for catching stop signals as well
-as **INIT** and **POST** run handlers that can be used for task cleanup, alerting and status updates.
+The `entrypoint.sh` calls `bootstrap` with `exec` to run language specific runtime setup. For the most part this just configures signal handlers to terminate main process and perform cleanup of worker environment.
 
-- The `job.php` defines simple job interface and simple job implementation
-- The `main.php` imports job.php to read cli + env arguments to pass into job constructor
+Each language has a `runtime.*` implementation that handles calling worker code. Additionally configures error handlers and signal handlers used for gracefull shutdown of your worker.
 
-## Build
+### Hooks
 
-- PHP `docker build -f Dockerfile -t phpjob .`
-- Node `docker build -f Dockerfile.node -t nodejob .`
+> [!NOTE]
+> Hooks are not fully operational in current version. Feel free to open a PR with your ideas.
 
-## Run
+Hooks are how you can configure additional functionality into your runtime separate to the worker code itself.
 
-- PHP `docker run -e COMPANY_ID=420 --rm --name Hot_new_fergus_job phpjob test=123`
-- Node `docker run -e COMPANY_ID=420 -e JOB_ID=1 --rm --name Hot_new_fergus_job nodejob test=123 name=Hot_new_fergus_job`
+- `init` can be used to regiser the worker somewhere or send of a notification it has started.
+- `sigterm_handler` can be used to handle cancellation of worker. This hook gets invoked after a signal has been sent to your worker, your worker
+runtime has an additional signal handler function that can be configured to read worker state at time of termination and perform any cleanup tasks
+as needed.
+- `shutdown` can be used for anything that needs to happen at successfuly completion/termination of your worker.
+
+## Example
+
+```js
+// named index.mjs
+
+export async function main(context) {
+  console.log("[WORKER] Job starting in run function");
+  console.log("[WORKER] my pid", process.pid);
+
+  for (let index = 0; index <= 10; index++) {
+    await sleep(1000);
+    console.log(`[JS] ${index}`);
+  }
+}
+```
+
+```Dockerfile
+FROM <image>:<tag>
+
+COPY index.mjs "$WORKER_ROOT/"
+
+CMD ["main"]
+```
 
 ## TODO
 
-- runtime logs from `entrypoint.sh` aren't saved yet. would be nice to be able to get the runtime logs output to file and store with job logs.
-- better error handling in the `runtime.php` instead of handling in `entrypoint.sh`
-  - have `entrypoint.php` dispatch to the runtime using hooks
-
-
-## Demo
-
-```sh
-docker build -f Dockerfile.php -t phpjob . && docker run -e COMPANY_ID=420 -e JOB_ID=1 --rm --name Hot_new_fergus_job phpjob test=123 name=Hot_new_fergus_job
-
-docker build -f Dockerfile.php -t phpjob . && docker run -e COMPANY_ID=420 -e JOB_ID=2 --rm --name Hot_new_fergus_job phpjob test=123 name=Cold_old_fergus_job
-
-docker build -f Dockerfile.php -t phpjob . && docker run -e COMPANY_ID=420 -e JOB_ID=3 --rm --name Hot_new_fergus_job phpjob test=123 name=Hot_v2_fergus_job
-```
+- publish base docker images
+- implement hooks to invoke user provided code
+- finish php runtime

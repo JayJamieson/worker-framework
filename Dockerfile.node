@@ -1,9 +1,0 @@
-FROM node:20-alpine
-
-COPY ./runtime.mjs /runtime/runtime.mjs
-COPY ./job.mjs /runtime/job.mjs
-
-COPY ./entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
-
-ENTRYPOINT ["entrypoint.sh", "node", "/runtime/runtime.mjs"]
