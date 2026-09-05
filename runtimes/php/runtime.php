@@ -1,49 +1,40 @@
 <?php
+
+/**
+ * PHP worker runtime entry point.
+ *
+ * Invoked by the shell bootstrap as:
+ *
+ *   php /var/runtime/runtime.php <mode> [arguments...]
+ *
+ * Everything else - which application to boot, what to run, how long to let it
+ * run - comes from the environment. See the README for the full list.
+ */
+
 declare(strict_types=1);
 
-require 'job.php';
+use WorkerFramework\Runtime\Exception\WorkerException;
+use WorkerFramework\Runtime\ExitCode;
+use WorkerFramework\Runtime\Runtime;
 
-function error_handler($errno, $errstr, $errfile, $errline)
-{
-  // handle error with sentry or cloudwatch logging here
-  printf("[PHP] %s\n", 'error_handler rethrowing errors as exceptions');
-  throw new ErrorException($errstr, $errno, 0, $errfile, $errline);
+require __DIR__ . '/src/autoload.php';
+
+// Workers are not web requests: an unbounded run time is the whole point, and
+// output should reach the log as it happens rather than at the end.
+set_time_limit(0);
+ini_set('implicit_flush', '1');
+ob_implicit_flush(true);
+
+try {
+    exit(Runtime::create($argv)->run());
+} catch (WorkerException $error) {
+    // Configuration is read before the logger exists, so its failures are
+    // reported here - as a message an operator can act on, not a trace.
+    fwrite(STDERR, sprintf("[RUNTIME] %s\n", $error->getMessage()));
+
+    exit($error->exitCode());
+} catch (Throwable $error) {
+    fwrite(STDERR, sprintf("[RUNTIME] fatal: %s\n%s\n", $error->getMessage(), $error->getTraceAsString()));
+
+    exit(ExitCode::CONFIGURATION_ERROR);
 }
-
-function exception_handler(Throwable $ex) {
-  printf("[PHP] %s\n", 'exception_handler handling exception');
-  printf("[PHP] %s\n", $ex);
-  exit(1);
-}
-
-set_error_handler("error_handler");
-set_exception_handler("exception_handler");
-
-// Register a signal handler to enable running code in php before exit.
-// Could attempt a cleanup of resources or revert half done work
-pcntl_async_signals(true);
-function sigint()
-{
-  printf("[PHP] %s\n\n", 'SIGINT|SIGERM received');
-  exit(1);
-}
-
-pcntl_signal(SIGTERM, 'sigint', false);
-pcntl_signal(SIGINT, 'sigint', false);
-pcntl_signal(SIGHUP, 'sigint', false);
-
-// Key Value pair cli arguments from docker can be parsed into associative array to pass to jobs
-// foo=bar -> [ 'foo' => 'bar']
-// we can also pass env variables from docker
-$context = [];
-$company_id = getenv("COMPANY_ID");
-
-if (isset($argv)) {
-  parse_str(implode('&', array_slice($argv, 1)), $context);
-}
-
-$class = $context["name"];
-
-$job = new $class($company_id, $context);
-
-$job->perform();

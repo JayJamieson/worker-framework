@@ -1,0 +1,40 @@
+{
+    "name": "worker-framework/php-runtime",
+    "description": "PHP runtime for the worker framework: runs plain handlers, Symfony Console commands and Symfony Messenger consumers as containers.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.2"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5",
+        "symfony/console": "^6.4 || ^7.0",
+        "symfony/dependency-injection": "^6.4 || ^7.0",
+        "symfony/event-dispatcher": "^6.4 || ^7.0",
+        "symfony/messenger": "^6.4 || ^7.0",
+        "symfony/serializer": "^6.4 || ^7.0"
+    },
+    "suggest": {
+        "symfony/console": "To run Symfony Console commands as workers (console mode).",
+        "symfony/messenger": "To consume queue messages (consume and message modes)."
+    },
+    "autoload": {
+        "psr-4": {
+            "WorkerFramework\\Runtime\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "WorkerFramework\\Runtime\\Tests\\": "tests/"
+        },
+        "classmap": [
+            "tests/Fixtures/"
+        ]
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "scripts": {
+        "test": "phpunit"
+    }
+}

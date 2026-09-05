@@ -1,0 +1,19 @@
+services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+
+    App\:
+        resource: '../src/'
+
+    # Workers run in `handler` mode are fetched from the container by class
+    # name, so they have to be reachable. Everything else stays private.
+    App\Worker\:
+        resource: '../src/Worker/'
+        public: true
+
+    # Only needed for `message` mode, where the runtime dispatches a single
+    # message onto the bus itself.
+    message_bus:
+        alias: messenger.default_bus
+        public: true

@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  php-runtime:
+    name: PHP ${{ matrix.php }} / Symfony ${{ matrix.symfony }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.3', '8.4']
+        symfony: ['^6.4', '^7.0']
+
+    defaults:
+      run:
+        working-directory: runtimes/php
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          # pcntl is what graceful shutdown is built on; posix is used by the
+          # tests to signal themselves.
+          extensions: pcntl, posix
+          coverage: none
+
+      - name: Pin the Symfony version under test
+        run: |
+          composer require --dev --no-update \
+            "symfony/console:${{ matrix.symfony }}" \
+            "symfony/dependency-injection:${{ matrix.symfony }}" \
+            "symfony/event-dispatcher:${{ matrix.symfony }}" \
+            "symfony/messenger:${{ matrix.symfony }}" \
+            "symfony/serializer:${{ matrix.symfony }}"
+
+      - run: composer update --no-interaction --no-progress
+
+      - run: composer test
+
+  shell:
+    name: Shell scripts
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck
+        run: shellcheck bootstrap entrypoint.sh
+
+      - name: Parse with dash, which is /bin/sh in the runtime images
+        run: |
+          sudo apt-get update && sudo apt-get install -y dash
+          dash -n bootstrap
+          dash -n entrypoint.sh
+
+  images:
+    name: Build ${{ matrix.runtime }} image
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        runtime: [php, node]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Built from the repository root so the shared entrypoint and bootstrap
+      # are in the build context.
+      - name: Build
+        run: docker build -f runtimes/${{ matrix.runtime }}/Dockerfile -t worker-framework/${{ matrix.runtime }}:ci .
+
+      - name: The image starts and reports a missing worker rather than crashing
+        run: |
+          set +e
+          output=$(docker run --rm worker-framework/${{ matrix.runtime }}:ci 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          test "$status" -ne 0

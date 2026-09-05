@@ -1,69 +1,99 @@
 #!/bin/sh
+#
+# Runtime bootstrap, shared by every language runtime.
+#
+# Responsibilities, in order:
+#
+#   * run the `init` hook;
+#   * start the language runtime named by WORKER_RUNTIME_COMMAND as a child
+#     process, so this shell stays alive to handle signals;
+#   * forward SIGTERM/SIGINT/SIGHUP to that child rather than dying first,
+#     which is what gives the worker its chance to finish cleanly;
+#   * run the `shutdown` hook and exit with the child's status.
+#
+# Hooks are optional executables in $WORKER_HOOK_DIR (default
+# $WORKER_ROOT/hooks). They let an image add behaviour - registering the worker,
+# notifying a scheduler, uploading logs - without touching worker code:
+#
+#   init      before the worker starts
+#   sigterm   when a termination signal arrives, with the signal name
+#   shutdown  after the worker exits, with its exit code
+#
+# Everything here is POSIX sh: the runtime images are based on slim and Alpine
+# variants where /bin/sh is dash or busybox, not bash.
 
-# initialization of environment
-init() {
-  echo "[RUNTIME] Starting worker"
+set -u
+
+: "${WORKER_ROOT:=/var/task}"
+: "${WORKER_RUNTIME_DIR:=/var/runtime}"
+: "${WORKER_HOOK_DIR:=$WORKER_ROOT/hooks}"
+
+pid=0
+
+log() {
+  echo "[RUNTIME] $*" >&2
 }
 
-shutdown() {
-  echo "[RUNTIME] Performing shutdown sequence"
-  # TODO revisit in a future dev cycle to implement basic job server
-  # case $1 in
-  #   0)
-  #     curl -s -X POST -H 'Content-Type: text/plain' --data-binary '@/var/log/stdout.log' "http://host.docker.internal:3000/job/$JOB_ID/complete"
-  #     ;;
-  #   *)
-  #     curl -s -X POST -H 'Content-Type: text/plain' --data-binary '@/var/log/stdout.log' "http://host.docker.internal:3000/job/$JOB_ID/fail"
-  #     ;;
-  # esac
-}
+# Run a hook if the image provides one. A hook that fails is reported but never
+# changes the worker's exit code: observability must not break the job.
+run_hook() {
+  hook_name="$1"
+  shift
 
-sigterm_handler() {
-  echo "[RUNTIME] Worker stopped before completion"
-}
+  hook_path="$WORKER_HOOK_DIR/$hook_name"
 
-sigterm_handler() {
-  if [ $pid -ne 0 ]; then
-    # the above if statement is important because it ensures
-    # that the application has already started. without this you
-    # could attempt cleanup steps if the application failed to
-    # start, causing errors.
-    echo "[RUNTIME] SIGINT|SIGERM received for PID $pid"
-    kill -15 "$pid"
-    wait "$pid"
-    sigterm_handler
-    echo "[RUNTIME] SIGINT|SIGERM handled for PID $pid"
+  if [ -x "$hook_path" ]; then
+    log "running $hook_name hook"
+
+    if ! "$hook_path" "$@"; then
+      log "$hook_name hook exited non-zero (ignored)"
+    fi
   fi
-  exit 143; # 128 + 15 -- SIGTERM
 }
 
-# Setup signal trap
-# on callback execute the specified handler
-trap 'sigterm_handler' TERM INT HUP KILL
+# Forward the signal and let the runtime decide how long it needs. The runtime
+# enforces its own grace period (WORKER_SHUTDOWN_TIMEOUT); duplicating that
+# here would only cut short a worker that is shutting down correctly.
+forward_signal() {
+  signal="$1"
 
-# Initialization
-init
+  log "received SIG$signal"
+  run_hook sigterm "$signal"
 
-#{{args}}
+  if [ "$pid" -ne 0 ]; then
+    kill -"$signal" "$pid" 2>/dev/null || true
+  fi
+}
 
-# use this if you want job logs put into file and saved for later viewing
-## separate log files
-# >/var/log/stdout.log 2>/var/log/stderr.log #{{binary}} #{{args}} &
+trap 'forward_signal TERM' TERM
+trap 'forward_signal INT' INT
+trap 'forward_signal HUP' HUP
 
-## single log file
-# >/var/log/stdout.log 2>&1 #{{binary}} #{{args}} &
+if [ -z "${WORKER_RUNTIME_COMMAND:-}" ]; then
+  log "WORKER_RUNTIME_COMMAND is not set; the image is misconfigured"
+  exit 2
+fi
 
-## HACK to put output to log files and console
-{
- #{{binary}} #{{args}}
-} > >(tee -a /var/log/stdout.log) 2> >(tee -a /var/log/stdout.log >&2) &
+run_hook init
 
-pid="$!"
+log "starting worker: $WORKER_RUNTIME_COMMAND $*"
 
-# wait until job completes
-wait "$pid"
-return_code="$?"
+# shellcheck disable=SC2086 # WORKER_RUNTIME_COMMAND is a command line, not a path
+$WORKER_RUNTIME_COMMAND "$@" &
+pid=$!
 
-# cleanup
-shutdown $return_code
-exit $return_code
+# `wait` returns as soon as a trapped signal arrives, before the child has
+# finished, so keep waiting until the child is genuinely gone. Without this
+# loop the container would report 128+signal while the worker was still
+# committing its last unit of work.
+status=0
+while kill -0 "$pid" 2>/dev/null; do
+  wait "$pid"
+  status=$?
+done
+
+run_hook shutdown "$status"
+
+log "worker exited with status $status"
+
+exit "$status"
