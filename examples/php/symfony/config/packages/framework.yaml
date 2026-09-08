@@ -1,0 +1,4 @@
+framework:
+    secret: '%env(APP_SECRET)%'
+    # Workers have no session and no browser; keep the container small.
+    test: false

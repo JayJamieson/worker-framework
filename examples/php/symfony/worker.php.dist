@@ -1,0 +1,24 @@
+<?php
+
+/**
+ * Optional. Delete this file and the runtime will boot App\Kernel by itself.
+ *
+ * It exists as an escape hatch for applications the runtime cannot guess at:
+ * return the Kernel, a Console Application, a message bus, Messenger receivers,
+ * or any combination, and the runtime uses what it is given instead of
+ * discovering it.
+ *
+ *   return new App\Kernel($_SERVER['APP_ENV'], (bool) $_SERVER['APP_DEBUG']);
+ *
+ *   return [
+ *       'bus' => $bus,
+ *       'receivers' => ['async' => $receiver],
+ *       'serializer' => $serializer,
+ *   ];
+ */
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/vendor/autoload.php';
+
+return new App\Kernel($_SERVER['APP_ENV'] ?? 'prod', (bool) ($_SERVER['APP_DEBUG'] ?? false));

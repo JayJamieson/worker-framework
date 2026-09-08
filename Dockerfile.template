@@ -1,10 +1,34 @@
-FROM debian:name-slim
+# Template for adding a language runtime.
+#
+# A runtime needs three things from its image:
+#
+#   1. the shared entrypoint at /usr/local/bin/entrypoint.sh;
+#   2. the shared bootstrap at $WORKER_RUNTIME_DIR/bootstrap;
+#   3. WORKER_RUNTIME_COMMAND set to the command that starts the language
+#      runtime, which the bootstrap runs as a child process and signals on
+#      shutdown.
+#
+# The runtime itself is then responsible for the contract in README.md: read
+# the worker from its arguments, build a context, stop when asked, and exit with
+# one of the documented codes.
+#
+# Build from the repository root so the shared files are in context:
+#
+#   docker build -f runtimes/<name>/Dockerfile -t worker-framework/<name>:<tag> .
 
-ENV WORKER_ROOT=/var/task
-ENV WORKER_RUNTIME_DIR=/var/runtime
+FROM <base image>
+
+ENV WORKER_ROOT=/var/task \
+    WORKER_RUNTIME_DIR=/var/runtime \
+    WORKER_RUNTIME_COMMAND="<interpreter> /var/runtime/<runtime file>"
+
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY bootstrap /var/runtime/bootstrap
+COPY runtimes/<name>/<runtime file> /var/runtime/
+
+RUN chmod +x /usr/local/bin/entrypoint.sh /var/runtime/bootstrap \
+    && mkdir -p /var/task
 
 WORKDIR /var/task
-
-COPY entrypoint.sh /usr/local/bin/
 
 ENTRYPOINT ["entrypoint.sh"]

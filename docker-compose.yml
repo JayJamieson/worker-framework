@@ -1,16 +1,37 @@
-version: '3'
+# Development services for working on the framework itself. The examples have
+# their own compose files; see examples/php/symfony/docker-compose.yml for a
+# realistic deployment.
+
 services:
-  db:
-    image: mysql
-    restart: always
+  # Build the base images the examples extend.
+  php-runtime:
+    build:
+      context: .
+      dockerfile: runtimes/php/Dockerfile
+    image: worker-framework/php:8.3
+    # Nothing to run: this service exists to build the base image.
+    profiles: ["build"]
+
+  node-runtime:
+    build:
+      context: .
+      dockerfile: runtimes/node/Dockerfile
+    image: worker-framework/node:20
+    profiles: ["build"]
+
+  # Transports the Messenger examples can point at.
+  rabbitmq:
+    image: rabbitmq:3-management
     ports:
-      - 3306:3306
+      - "5672:5672"
+      - "15672:15672"
+    profiles: ["dev"]
+
+  postgres:
+    image: postgres:16-alpine
     environment:
-      MYSQL_DATABASE: job_container
-      MYSQL_ROOT_PASSWORD: password
-  # job:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile.php
-  #   environment:
-  #     - COMPANY_ID=420
+      POSTGRES_PASSWORD: worker
+      POSTGRES_DB: worker
+    ports:
+      - "5432:5432"
+    profiles: ["dev"]

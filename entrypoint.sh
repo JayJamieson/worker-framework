@@ -1,11 +1,20 @@
 #!/bin/sh
+#
+# Container entrypoint, shared by every runtime.
+#
+# Its only job is to hand the arguments to the runtime bootstrap with `exec`,
+# so that the bootstrap becomes PID 1 and receives the signals Docker sends on
+# `docker stop`.
 
-if [ $# -ne 1 ]; then
-  echo "entrypoint.sh requires worker filename as first argument" 1>&2
-  exit 142
+set -eu
+
+: "${WORKER_RUNTIME_DIR:=/var/runtime}"
+
+BOOTSTRAP="$WORKER_RUNTIME_DIR/bootstrap"
+
+if [ ! -x "$BOOTSTRAP" ]; then
+  echo "[RUNTIME] $BOOTSTRAP is missing or not executable" >&2
+  exit 2
 fi
-export WORKER="$1"
 
-RUNTIME_ENTRYPOINT="$WORKER_RUNTIME_DIR/bootstrap"
-
-exec $RUNTIME_ENTRYPOINT
+exec "$BOOTSTRAP" "$@"
