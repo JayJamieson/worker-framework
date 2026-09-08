@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace WorkerFramework\Runtime;
 
+use WorkerFramework\Runtime\Contract\JobReporter;
 use WorkerFramework\Runtime\Log\Logger;
 use WorkerFramework\Runtime\Signal\SignalHandler;
 
@@ -29,6 +30,7 @@ final class Context
         private readonly SignalHandler $signals,
         private readonly ?float $deadline = null,
         private readonly ?object $container = null,
+        private readonly ?JobReporter $reporter = null,
     ) {
     }
 
@@ -79,10 +81,14 @@ final class Context
      *
      * Call this between units of work in a long loop; it is the one call that
      * keeps a worker interruptible even when async signal delivery is off.
+     * When a WORKER_JOB_REPORTER is configured, this is also what keeps its
+     * heartbeat fresh - a worker that stops calling checkpoint() because it
+     * is wedged is exactly the worker whose heartbeat should go stale.
      */
     public function checkpoint(): bool
     {
         $this->signals->tick();
+        $this->reporter?->heartbeat($this);
 
         return $this->signals->isStopping();
     }

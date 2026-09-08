@@ -115,6 +115,35 @@ final class ConfigurationTest extends TestCase
         self::assertSame(30, $config->shutdownTimeout);
         self::assertSame('App\\Kernel', $config->kernelClass);
         self::assertNotSame('', $config->jobId);
+        self::assertNull($config->jobReporterClass, 'no job-status reporting unless asked for');
+        self::assertSame(30, $config->heartbeatInterval);
+    }
+
+    public function testJobReporterAndHeartbeatIntervalAreConfigurable(): void
+    {
+        $config = $this->create(['handler', 'App\\Job'], [
+            'WORKER_JOB_REPORTER' => 'App\\Reporting\\DynamoJobReporter',
+            'WORKER_HEARTBEAT_INTERVAL' => '5',
+        ]);
+
+        self::assertSame('App\\Reporting\\DynamoJobReporter', $config->jobReporterClass);
+        self::assertSame(5, $config->heartbeatInterval);
+    }
+
+    public function testOnlyConsumeModeIsLongRunningByDefault(): void
+    {
+        self::assertFalse($this->create(['handler', 'App\\Job'])->longRunning);
+        self::assertFalse($this->create(['console', 'app:import'])->longRunning);
+        self::assertFalse($this->create(['message'])->longRunning);
+        self::assertTrue($this->create(['consume', 'async'])->longRunning);
+    }
+
+    public function testLongRunningCanBeSetExplicitlyForAnyMode(): void
+    {
+        // The fix for a console-mode consumer being misclassified as a
+        // one-shot job: the flag, not the mode, has the final say.
+        self::assertTrue($this->create(['console', 'app:import'], ['WORKER_LONG_RUNNING' => '1'])->longRunning);
+        self::assertFalse($this->create(['consume', 'async'], ['WORKER_LONG_RUNNING' => '0'])->longRunning);
     }
 
     public function testAJobIdIsGeneratedWhenTheDispatcherDoesNotSupplyOne(): void

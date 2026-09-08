@@ -31,12 +31,21 @@ services:
       # A job that hangs should fail rather than run forever.
       WORKER_TIMEOUT: "1800"
 
-  # A handler-mode worker, with its input as JSON.
+  # A handler-mode worker, with its input as JSON. This is the shape an ECS
+  # RunTask-per-job deployment takes: WORKER_JOB_ID matches whatever id the
+  # caller already tracks the job by, and DynamoJobReporter keeps a status
+  # record of it independent of the container's own exit code - claimed,
+  # then succeeded/failed/stopped, with a heartbeat in between. Set
+  # WORKER_SHUTDOWN_TIMEOUT below the ECS task's own stop timeout so a wedged
+  # run reports "stopped/forced" itself before ECS has to SIGKILL it.
   rebuild:
     build: .
     command: ["handler", "App\\Worker\\RebuildSearchIndex"]
     environment:
+      WORKER_JOB_ID: "job-42"
       WORKER_PAYLOAD: '{"companyId": 42, "since": "2024-01-01"}'
+      WORKER_JOB_REPORTER: App\Reporting\DynamoJobReporter
+      WORKER_SHUTDOWN_TIMEOUT: "45"
 
   # One message, one container: the shape that suits an external scheduler,
   # where the exit code decides whether the message is acked or retried.

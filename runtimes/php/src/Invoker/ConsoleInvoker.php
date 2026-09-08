@@ -13,6 +13,7 @@ use WorkerFramework\Runtime\Application\ApplicationContext;
 use WorkerFramework\Runtime\Application\ConsoleFactory;
 use WorkerFramework\Runtime\Configuration;
 use WorkerFramework\Runtime\Context;
+use WorkerFramework\Runtime\Contract\ContextAwareCommand;
 use WorkerFramework\Runtime\Exception\ConfigurationException;
 use WorkerFramework\Runtime\Exception\HandlerNotFoundException;
 use WorkerFramework\Runtime\Log\Logger;
@@ -27,7 +28,11 @@ use WorkerFramework\Runtime\Log\LogLevel;
  *
  * Commands implementing SignalableCommandInterface keep working - the runtime
  * chains its handlers rather than replacing them - so a command that already
- * knows how to stop cleanly still does.
+ * knows how to stop cleanly still does. A command can also implement
+ * ContextAwareCommand to get the runtime's Context directly, which makes this
+ * mode a first-class home for a long-running, non-Messenger worker (a plain
+ * `queue:work`, say) rather than something only Messenger consumers can be:
+ * pair it with WORKER_LONG_RUNNING=1 so a clean stop reports exit 0.
  */
 final class ConsoleInvoker implements Invoker
 {
@@ -61,6 +66,16 @@ final class ConsoleInvoker implements Invoker
                 'Console command "%s" is not registered. Available commands can be listed with `bin/console list`.',
                 $commandName,
             ));
+        }
+
+        // Application caches the resolved instance on first lookup (has(),
+        // above, already triggered that), so mutating it here reaches the
+        // exact object run() executes below, however it was constructed -
+        // by hand in worker.php, or lazily from the service container.
+        $command = $application->find($commandName);
+
+        if ($command instanceof ContextAwareCommand) {
+            $command->setWorkerContext($context);
         }
 
         $output = $this->createOutput();

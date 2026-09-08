@@ -38,6 +38,7 @@ final class Configuration
         public readonly string $jobId,
         public readonly int $timeout,
         public readonly int $shutdownTimeout,
+        public readonly bool $longRunning,
         public readonly LogLevel $logLevel,
         public readonly string $logFormat,
         public readonly Limits $limits,
@@ -45,6 +46,8 @@ final class Configuration
         public readonly ?string $transport,
         public readonly ?string $busService,
         public readonly ?string $serializerService,
+        public readonly ?string $jobReporterClass,
+        public readonly int $heartbeatInterval,
     ) {
     }
 
@@ -86,6 +89,13 @@ final class Configuration
             jobId: self::value($env, 'WORKER_JOB_ID') ?? self::generateJobId(),
             timeout: max(0, (int) ($env['WORKER_TIMEOUT'] ?? 0)),
             shutdownTimeout: max(0, (int) ($env['WORKER_SHUTDOWN_TIMEOUT'] ?? 30)),
+            // A stop that finds the worker mid-task is a fault for a one-shot
+            // job, but the whole point of a consumer - so consume mode
+            // defaults to true. Any mode can be told otherwise: a `console`
+            // command that is really a long-running queue:work needs this
+            // set explicitly, and it is exactly what makes that legitimate
+            // rather than something the runtime infers from the mode alone.
+            longRunning: self::bool($env, 'WORKER_LONG_RUNNING', Mode::Consume === $mode),
             logLevel: LogLevel::tryFrom(strtolower($env['WORKER_LOG_LEVEL'] ?? 'info')) ?? LogLevel::Info,
             logFormat: 'json' === strtolower($env['WORKER_LOG_FORMAT'] ?? 'text') ? 'json' : 'text',
             limits: Limits::fromEnvironment($env),
@@ -93,6 +103,8 @@ final class Configuration
             transport: self::value($env, 'WORKER_TRANSPORT'),
             busService: self::value($env, 'WORKER_BUS'),
             serializerService: self::value($env, 'WORKER_SERIALIZER'),
+            jobReporterClass: self::value($env, 'WORKER_JOB_REPORTER'),
+            heartbeatInterval: max(0, (int) ($env['WORKER_HEARTBEAT_INTERVAL'] ?? 30)),
         );
     }
 
@@ -122,6 +134,7 @@ final class Configuration
             jobId: $this->jobId,
             timeout: $this->timeout,
             shutdownTimeout: $this->shutdownTimeout,
+            longRunning: $this->longRunning,
             logLevel: $this->logLevel,
             logFormat: $this->logFormat,
             limits: $this->limits,
@@ -129,6 +142,8 @@ final class Configuration
             transport: $this->transport,
             busService: $this->busService,
             serializerService: $this->serializerService,
+            jobReporterClass: $this->jobReporterClass,
+            heartbeatInterval: $this->heartbeatInterval,
         );
     }
 

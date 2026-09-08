@@ -2,6 +2,7 @@
     "name": "acme/reports-worker",
     "type": "project",
     "require": {
+        "aws/aws-sdk-php": "^3.300",
         "php": ">=8.2",
         "symfony/console": "^7.0",
         "symfony/dotenv": "^7.0",

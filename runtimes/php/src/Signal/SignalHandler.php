@@ -42,6 +42,9 @@ final class SignalHandler
     /** @var list<callable(int): void> */
     private array $listeners = [];
 
+    /** @var list<callable(): void> */
+    private array $forceKillListeners = [];
+
     /** @var array<int, int> */
     private array $received = [];
 
@@ -151,6 +154,21 @@ final class SignalHandler
     }
 
     /**
+     * Register a callback to run only if the worker does not stop within the
+     * grace period and the runtime has to force-exit it - the "running away /
+     * stuck" case, as distinct from a stop it complied with in time. Runs
+     * from inside the SIGALRM handler, immediately before the process exits:
+     * keep it fast, and do not rely on anything that needed a normal return
+     * from the worker to have already happened.
+     *
+     * @param callable(): void $listener
+     */
+    public function onForceKill(callable $listener): void
+    {
+        $this->forceKillListeners[] = $listener;
+    }
+
+    /**
      * Dispatch pending signals. Only needed when async signal delivery is
      * unavailable; harmless otherwise, which is why Context exposes it to
      * worker code as a "checkpoint" call.
@@ -229,6 +247,14 @@ final class SignalHandler
             $this->logger->error('Worker did not stop within the grace period, exiting', [
                 'grace_period' => $this->shutdownTimeout,
             ]);
+
+            foreach ($this->forceKillListeners as $listener) {
+                try {
+                    $listener();
+                } catch (\Throwable $error) {
+                    $this->logger->exception($error, 'Force-kill listener failed');
+                }
+            }
 
             exit($this->exitCode());
         }

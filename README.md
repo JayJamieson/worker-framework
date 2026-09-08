@@ -68,7 +68,8 @@ docker run --rm -e WORKER_PAYLOAD='{"companyId":42}' reports handler 'App\Worker
 ```
 
 Working examples: [`examples/php/symfony`](examples/php/symfony) (all four
-modes against one Symfony app), [`examples/php/simple`](examples/php/simple)
+modes against one Symfony app), [`examples/php/existing-project`](examples/php/existing-project)
+(adapting a plain PHP app, no framework), [`examples/php/simple`](examples/php/simple)
 (one file, no Composer), [`examples/node`](examples/node).
 
 ## PHP modes
@@ -112,6 +113,37 @@ Arguments, options, output and exit code all behave as they do under
 has nobody to answer a prompt. Commands implementing
 `SignalableCommandInterface` keep their own shutdown handling — the runtime
 chains its signal handlers rather than replacing them.
+
+This is also where a long-running, **non**-Messenger worker belongs — a plain
+`queue:work` loop, say. A command can implement `ContextAwareCommand` to get
+the runtime's `Context` — `checkpoint()`, `isStopping()`, `onShutdown()` —
+without reimplementing that state via `SignalableCommandInterface` itself:
+
+```php
+final class QueueWorkCommand extends Command implements ContextAwareCommand
+{
+    private ?Context $context = null;
+
+    public function setWorkerContext(Context $context): void
+    {
+        $this->context = $context;
+    }
+
+    protected function execute(InputInterface $input, OutputInterface $output): int
+    {
+        while (true) {
+            if ($this->context?->checkpoint()) {
+                return Command::SUCCESS;
+            }
+            // ... claim and run one job ...
+        }
+    }
+}
+```
+
+Pair it with `WORKER_LONG_RUNNING=1` (see [Graceful shutdown](#graceful-shutdown))
+so a clean stop reports exit 0 instead of being treated as an interrupted
+one-shot job.
 
 ### `consume` — a Messenger consumer
 
@@ -209,9 +241,86 @@ It runs inside the signal handler, so keep it short.
 | 130 / 143 | stopped by SIGINT / SIGTERM |
 | *n* | whatever the handler or console command returned |
 
-A **consumer** stopped by SIGTERM exits 0: it did what it was told, and a
-rolling deploy should not look like a crash loop. A **one-shot job** cut short
-exits 143, because its work is not finished and the scheduler should know.
+A **long-running** worker stopped by SIGTERM exits 0: it did what it was told,
+and a rolling deploy should not look like a crash loop. A **one-shot job** cut
+short exits 143, because its work is not finished and the scheduler should
+know. This only overrides a *successful* return — a worker that reported its
+own failure, or its own exit code, keeps it.
+
+Which of the two a worker is comes from `WORKER_LONG_RUNNING`, not from the
+mode: it defaults to on for `consume` and off for everything else, but any
+mode can be told otherwise. A `console` command that is really a long-running
+`queue:work` sets `WORKER_LONG_RUNNING=1` and gets the same clean-stop-is-not-
+a-crash treatment a Messenger consumer gets by default.
+
+## Reporting job status
+
+The exit code is what the *container orchestrator* sees. Often something else
+needs to know too — a status column in DynamoDB, an internal API — because the
+queue transport and the job's business status aren't the same thing. Implement
+`WorkerFramework\Runtime\Contract\JobReporter` and set
+`WORKER_JOB_REPORTER=App\Reporting\YourReporter`:
+
+```php
+interface JobReporter
+{
+    public function starting(Context $context): void;
+    public function heartbeat(Context $context): void;
+    public function stopping(Context $context, StopReason $reason): void;  // winding down
+    public function succeeded(Context $context): void;
+    public function failed(Context $context, int $exitCode, ?Throwable $error): void;
+    public function stopped(Context $context, StopReason $reason): void;   // Signal | Timeout | Forced
+}
+```
+
+Exactly one of `succeeded`/`failed`/`stopped` runs per job. `stopping()` is the
+one non-terminal call: it fires the moment a stop is requested, so the window
+between SIGTERM arriving and the worker actually winding down — which can be as
+long as `WORKER_SHUTDOWN_TIMEOUT` — is not silent. Without it, anything watching
+the job sees "claimed" right up until the worker finally returns.
+
+A reporter's own failures never become the job's failures: every call is wrapped,
+so a database blip is logged at error level and the job carries on. That matters
+most for `heartbeat()`, which fires from inside `checkpoint()` in your worker's
+own loop.
+
+It's resolved from the service container when the application provides one —
+so it can take a DynamoDB client or an HTTP client as a constructor argument —
+falling back to `new` for a reporter with no dependencies. `heartbeat()` fires
+on every `Context::checkpoint()`, throttled by `WORKER_HEARTBEAT_INTERVAL`
+(default 30s, `0` disables throttling) so a tight loop doesn't turn into a
+write on every iteration.
+
+This is the mechanism behind `WORKER_LONG_RUNNING`'s exit codes, made explicit:
+`stopped(..., StopReason::Signal | StopReason::Timeout)` is a clean stop, no
+different from `succeeded()` as far as the job is concerned.
+`StopReason::Forced` is the one that matters operationally — the worker did
+not comply within `WORKER_SHUTDOWN_TIMEOUT` and had to be force-exited. That's
+the "running away / stuck" case, and it's distinct from a plain signal on
+purpose: a `docker stop` a consumer complies with promptly is not the same
+event as one it ignores.
+
+**What no reporter can do**: report a job that was SIGKILLed outright — by ECS
+after its own task stop timeout, by the kernel's OOM killer, by the host
+disappearing. No process-level hook survives that, by construction. Two ways
+to close that gap without the worker's help:
+
+- Set `WORKER_SHUTDOWN_TIMEOUT` comfortably below whatever stop timeout your
+  scheduler enforces (ECS's task-level `stopTimeout`, Kubernetes'
+  `terminationGracePeriodSeconds`), so the runtime's own force-exit — which
+  *does* call `stopped(..., StopReason::Forced)` — has a chance to run before
+  the harsher external kill.
+- Don't delete the queue message until you've recorded success. A SIGKILLed
+  worker never gets there, so the transport's own visibility timeout retries
+  it with nothing extra to build. If status lives in your own table instead,
+  have a reconciler treat a row that's `heartbeat()`-stale with no terminal
+  status as failed.
+
+Complete implementations: [`examples/php/existing-project`](examples/php/existing-project)
+(plain PDO, no framework — the adapter pattern for an app that already has its
+own bootstrap and database layer) and
+[`examples/php/symfony/src/Reporting/DynamoJobReporter.php`](examples/php/symfony/src/Reporting/DynamoJobReporter.php)
+(DynamoDB, autowired).
 
 ## Configuration
 
@@ -229,6 +338,9 @@ container does without rebuilding it.
 | `WORKER_JOB_ID` | generated | correlation id, added to every log record |
 | `WORKER_TIMEOUT` | `0` | wall-clock limit in seconds; `0` is unbounded |
 | `WORKER_SHUTDOWN_TIMEOUT` | `30` | grace period after a stop is requested |
+| `WORKER_LONG_RUNNING` | on for `consume`, off otherwise | a clean stop exits 0 instead of 128+signal |
+| `WORKER_JOB_REPORTER` | — | class implementing `JobReporter`, notified of job lifecycle |
+| `WORKER_HEARTBEAT_INTERVAL` | `30` | seconds between `heartbeat()` calls; `0` disables throttling |
 | `WORKER_LOG_LEVEL` | `info` | `debug` … `critical` |
 | `WORKER_LOG_FORMAT` | `text` | `text` or `json` |
 | `WORKER_ROOT` | `/var/task` | where the application lives |
@@ -320,7 +432,7 @@ Symfony version.
 ```sh
 cd runtimes/php
 composer install
-composer test          # 78 tests against real Symfony 7 components
+composer test          # 100 tests against real Symfony 7 components
 ```
 
 The test suite runs the real runtime end to end: console commands through a

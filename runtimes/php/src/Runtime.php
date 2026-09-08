@@ -7,9 +7,12 @@ namespace WorkerFramework\Runtime;
 use Throwable;
 use WorkerFramework\Runtime\Application\ApplicationContext;
 use WorkerFramework\Runtime\Application\Bootstrapper;
+use WorkerFramework\Runtime\Contract\JobReporter;
+use WorkerFramework\Runtime\Contract\StopReason;
 use WorkerFramework\Runtime\Exception\WorkerException;
 use WorkerFramework\Runtime\Invoker\InvokerFactory;
 use WorkerFramework\Runtime\Log\Logger;
+use WorkerFramework\Runtime\Reporting\JobReporterFactory;
 use WorkerFramework\Runtime\Signal\SignalHandler;
 
 /**
@@ -87,17 +90,47 @@ final class Runtime
     private function execute(): int
     {
         $application = (new Bootstrapper($this->config, $this->logger))->boot();
-        $context = $this->createContext($application);
+        $reporter = (new JobReporterFactory($application, $this->logger))
+            ->create($this->config->jobReporterClass, $this->config->heartbeatInterval);
+        $context = $this->createContext($application, $reporter);
         $invoker = InvokerFactory::create($this->config, $application, $this->logger);
 
         $this->logger->info('Starting ' . $invoker->describe(), ['pid' => getmypid()]);
+        $reporter?->starting($context);
 
-        $exitCode = $invoker->invoke($context);
+        if (null !== $reporter) {
+            // Registered after starting() so that call is always the first the
+            // reporter sees. A signal that arrived before now is not lost:
+            // onShutdown() invokes a late listener immediately.
+            $this->signals->onShutdown(function () use ($reporter, $context): void {
+                $reporter->stopping($context, $this->stopReason());
+            });
 
-        return $this->reconcile($exitCode);
+            // Fires only if the worker ignores the stop request entirely and
+            // the runtime has to force-exit it - the one moment a normal
+            // return from invoke() never happens, so it needs its own hook.
+            $this->signals->onForceKill(static fn () => $reporter->stopped($context, StopReason::Forced));
+        }
+
+        try {
+            $exitCode = $invoker->invoke($context);
+        } catch (WorkerException $error) {
+            $reporter?->failed($context, $error->exitCode(), $error);
+
+            throw $error;
+        } catch (Throwable $error) {
+            $reporter?->failed($context, ExitCode::WORKER_ERROR, $error);
+
+            throw $error;
+        }
+
+        $exitCode = $this->reconcile($exitCode);
+        $this->reportOutcome($reporter, $context, $exitCode);
+
+        return $exitCode;
     }
 
-    private function createContext(ApplicationContext $application): Context
+    private function createContext(ApplicationContext $application, ?JobReporter $reporter): Context
     {
         return new Context(
             $this->config->jobId,
@@ -107,17 +140,52 @@ final class Runtime
             $this->signals,
             $this->config->deadline($this->startedAt),
             $application->container(),
+            $reporter,
         );
+    }
+
+    /**
+     * Tell the reporter what happened to a run that returned normally -
+     * stopped, succeeded or failed by its own return value, in that priority,
+     * since "was this caused by a stop request" is more informative than the
+     * raw exit code once one was requested.
+     */
+    private function reportOutcome(?JobReporter $reporter, Context $context, int $exitCode): void
+    {
+        if (null === $reporter) {
+            return;
+        }
+
+        if ($this->signals->isStopping()) {
+            $reporter->stopped($context, $this->stopReason());
+        } elseif (ExitCode::SUCCESS === $exitCode) {
+            $reporter->succeeded($context);
+        } else {
+            $reporter->failed($context, $exitCode, null);
+        }
+    }
+
+    /**
+     * Why a stop was requested. Only meaningful once `isStopping()` is true.
+     * Forced is never one of the answers here: that is decided later, by
+     * SignalHandler, if the grace period runs out.
+     */
+    private function stopReason(): StopReason
+    {
+        return $this->signals->hasTimedOut() ? StopReason::Timeout : StopReason::Signal;
     }
 
     /**
      * Decide what a run that was interrupted should report.
      *
-     * A consumer stopped by SIGTERM did exactly what it was told, so it exits
-     * 0 and a rolling deploy stays quiet. A one-shot job cut short did not
-     * finish its work, so it reports 128+signal and the scheduler can retry.
-     * A run killed by WORKER_TIMEOUT always reports the timeout, because that
-     * is a fault however it is deployed.
+     * A long-running worker (WORKER_LONG_RUNNING, on by default for `consume`)
+     * stopped by SIGTERM did exactly what it was told, so it exits 0 and a
+     * rolling deploy stays quiet. A one-shot job cut short did not finish its
+     * work, so it reports 128+signal and the scheduler can retry. Either way
+     * this only overrides a *successful* return - a worker that already
+     * reported its own failure or its own exit code keeps it. A run killed by
+     * WORKER_TIMEOUT always reports the timeout, because that is a fault
+     * however it is deployed.
      */
     private function reconcile(int $exitCode): int
     {
@@ -129,7 +197,7 @@ final class Runtime
             return ExitCode::TIMEOUT;
         }
 
-        if ($this->signals->isStopping() && Mode::Consume !== $this->config->mode) {
+        if ($this->signals->isStopping() && !$this->config->longRunning) {
             return $this->signals->exitCode();
         }
 

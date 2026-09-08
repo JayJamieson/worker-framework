@@ -1,0 +1,13 @@
+{
+    "name": "acme/invoices-worker",
+    "type": "project",
+    "require": {
+        "php": ">=8.2",
+        "ext-pdo": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "Acme\\Worker\\": "src/"
+        }
+    }
+}

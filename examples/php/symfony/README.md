@@ -35,6 +35,22 @@ message_bus:
 Neither is needed for `console` or `consume` mode, which go through the
 Console Application and touch no private services.
 
+## Reporting job status independently of the exit code
+
+`rebuild`'s `WORKER_JOB_REPORTER=App\Reporting\DynamoJobReporter` (see
+`src/Reporting/DynamoJobReporter.php`) updates a DynamoDB item as the job moves
+through `claimed → succeeded|failed|stopped`, with a heartbeat in between -
+for an ECS RunTask-per-job deployment where a separate table, not the queue
+itself, is the actual record of what happened to a job. `WORKER_JOB_ID` should
+match whatever id the caller already tracks the job by.
+
+This is deliberately *not* how `consumer`'s per-message status would be
+reported: Messenger already fires `WorkerMessageHandledEvent` /
+`WorkerMessageFailedEvent` for that, at the right granularity (per message,
+not per container run) - an `#[AsEventListener]` on those needs no runtime
+support at all. `WORKER_JOB_REPORTER` is for the one-job-per-container modes
+(`handler`, `message`) where the whole run *is* the job.
+
 ## Running it
 
 ```sh

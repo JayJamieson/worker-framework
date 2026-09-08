@@ -17,3 +17,14 @@ services:
     message_bus:
         alias: messenger.default_bus
         public: true
+
+    # WORKER_JOB_REPORTER=App\Reporting\DynamoJobReporter fetches this from
+    # the container so it can be constructed with its DynamoDB client.
+    App\Reporting\:
+        resource: '../src/Reporting/'
+        public: true
+
+    Aws\DynamoDb\DynamoDbClient:
+        arguments:
+            - version: 'latest'
+              region: '%env(AWS_REGION)%'

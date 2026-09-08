@@ -75,6 +75,7 @@ final class MessengerFixture
         $application->add(new ImportCommand());
         $application->add(new FailingCommand());
         $application->add(new LongRunningCommand());
+        $application->add(new QueueWorkCommand());
 
         return $application;
     }

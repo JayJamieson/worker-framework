@@ -11,6 +11,8 @@ use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
+use WorkerFramework\Runtime\Context;
+use WorkerFramework\Runtime\Contract\ContextAwareCommand;
 
 /**
  * An ordinary Symfony command, of the kind an application already has.
@@ -79,6 +81,42 @@ final class LongRunningCommand extends Command implements SignalableCommandInter
 
             if (Recorder::count('command_tick') > 500) {
                 break;
+            }
+        }
+
+        return Command::SUCCESS;
+    }
+}
+
+/**
+ * A long-running console command with no idea SignalableCommandInterface
+ * exists - it cooperates with a stop request purely through the runtime's
+ * Context, the way a handler-mode worker already can.
+ */
+#[AsCommand(name: 'app:queue-work')]
+final class QueueWorkCommand extends Command implements ContextAwareCommand
+{
+    private ?Context $context = null;
+
+    public function setWorkerContext(Context $context): void
+    {
+        $this->context = $context;
+    }
+
+    protected function execute(InputInterface $input, OutputInterface $output): int
+    {
+        for ($i = 0; $i < 1000; ++$i) {
+            if (true === $this->context?->checkpoint()) {
+                Recorder::record('drained_at', $i);
+
+                return Command::SUCCESS;
+            }
+
+            Recorder::record('tick', $i);
+            usleep(20_000);
+
+            if (2 === $i) {
+                posix_kill((int) getmypid(), \SIGTERM);
             }
         }
 
